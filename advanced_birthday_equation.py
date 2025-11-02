@@ -27,6 +27,81 @@ class AdvancedBirthdayEquationGenerator:
         self.date_string = date_string
         print(f"Extracted digits: {self.digits}")
     
+    def generate_digit_partitions(self, max_groups: int = 5) -> List[List[int]]:
+        """
+        Generate different ways to partition digits into multi-digit numbers.
+        Advanced version with more sophisticated partitioning.
+        
+        Args:
+            max_groups: Maximum number of groups to create
+            
+        Returns:
+            List of partitions, where each partition is a list of multi-digit numbers
+        """
+        if len(self.digits) <= 1:
+            return [[self.digits[0]] if self.digits else []]
+        
+        partitions = []
+        digit_string = ''.join(map(str, self.digits))
+        
+        def generate_splits(s: str, current_partition: List[int], start_pos: int):
+            if start_pos == len(s):
+                if len(current_partition) >= 2 and len(current_partition) <= max_groups:
+                    partitions.append(current_partition[:])
+                return
+            
+            # Try different lengths for the next number
+            max_length = min(4, len(s) - start_pos)  # Cap at 4 digits per number
+            
+            for length in range(1, max_length + 1):
+                # Skip if this would leave insufficient digits for remaining groups
+                remaining_digits = len(s) - start_pos - length
+                current_groups = len(current_partition) + 1
+                
+                if remaining_digits > 0 and (max_groups - current_groups) < 1:
+                    continue
+                if remaining_digits > (max_groups - current_groups) * 4:
+                    continue
+                
+                next_num_str = s[start_pos:start_pos + length]
+                next_num = int(next_num_str)
+                
+                # Avoid numbers that are too large
+                if next_num > 9999:
+                    continue
+                
+                current_partition.append(next_num)
+                generate_splits(s, current_partition, start_pos + length)
+                current_partition.pop()
+        
+        generate_splits(digit_string, [], 0)
+        
+        # Always include the original single-digit partition
+        partitions.append(self.digits[:])
+        
+        # Add some common patterns for dates
+        if len(self.digits) == 8:  # Date format like 09052005
+            # Try DD MM YYYY patterns
+            d_str = digit_string
+            partitions.append([int(d_str[:2]), int(d_str[2:4]), int(d_str[4:])])  # 09, 05, 2005
+            partitions.append([int(d_str[0]), int(d_str[1:3]), int(d_str[3:5]), int(d_str[5:])])  # 0, 90, 52, 005
+            partitions.append([int(d_str[:1]), int(d_str[1:4]), int(d_str[4:])])  # 0, 905, 2005
+        
+        # Remove duplicates
+        unique_partitions = []
+        seen = set()
+        
+        for partition in partitions:
+            partition_tuple = tuple(partition)
+            if partition_tuple not in seen:
+                seen.add(partition_tuple)
+                unique_partitions.append(partition)
+        
+        # Sort by partition diversity (prefer mixed digit counts)
+        unique_partitions.sort(key=lambda p: (len(p), -sum(1 for x in p if x > 9)))
+        
+        return unique_partitions
+    
     def safe_eval(self, expression: str) -> Optional[float]:
         """Safely evaluate mathematical expressions."""
         try:
@@ -74,28 +149,37 @@ class AdvancedBirthdayEquationGenerator:
         except (ZeroDivisionError, OverflowError, ValueError, SyntaxError):
             return None
     
-    def generate_all_expressions(self, digits: List[int]) -> Set[Tuple[str, float]]:
-        """Generate all possible expressions from digits with different operator combinations."""
-        if len(digits) == 1:
-            # Allow factorial option for single digit too
-            d = digits[0]
+    def generate_all_expressions(self, numbers: List[int]) -> Set[Tuple[str, float]]:
+        """Generate all possible expressions from numbers with different operator combinations."""
+        if len(numbers) == 1:
+            # Allow factorial option for single digit only
+            num = numbers[0]
             results = set()
-            results.add((str(d), float(d)))
-            # try factorial if valid
-            try:
-                results.add((f"fact({d})", float(eval(str(math.factorial(d))))))
-            except Exception:
-                pass
+            results.add((str(num), float(num)))
+            
+            # Only try factorial for single digits (0-9)
+            if 0 <= num <= 9:
+                try:
+                    factorial_val = math.factorial(num)
+                    if factorial_val <= 1000000:  # Reasonable limit
+                        results.add((f"fact({num})", float(factorial_val)))
+                except Exception:
+                    pass
             return results
         
         expressions = set()
         
-        # Prepare token options per digit to optionally apply factorial
-        token_options = [[str(d), f"fact({d})"] for d in digits]
+        # Prepare token options per number to optionally apply factorial (only for single digits)
+        token_options = []
+        for num in numbers:
+            if 0 <= num <= 9:
+                token_options.append([str(num), f"fact({num})"])
+            else:
+                token_options.append([str(num)])
 
         # Generate all combinations of tokens and operators
         for token_choice in itertools.product(*token_options):
-            for operators in itertools.product(self.OPERATORS, repeat=len(digits)-1):
+            for operators in itertools.product(self.OPERATORS, repeat=len(numbers)-1):
                 # Build expression respecting special operators
                 expr = str(token_choice[0])
                 for i, op in enumerate(operators):
@@ -112,7 +196,7 @@ class AdvancedBirthdayEquationGenerator:
                     expressions.add((expr, result))
 
                 # Also try with full parenthesization (left to right)
-                if len(digits) > 2:
+                if len(numbers) > 2:
                     paren_expr = f"({token_choice[0]} {operators[0]} {token_choice[1]})"
                     for i in range(1, len(operators)):
                         if operators[i] == 'root':
@@ -128,16 +212,21 @@ class AdvancedBirthdayEquationGenerator:
         
         return expressions
     
-    def generate_with_custom_grouping(self, digits: List[int]) -> Set[Tuple[str, float]]:
+    def generate_with_custom_grouping(self, numbers: List[int]) -> Set[Tuple[str, float]]:
         """Generate expressions with various custom groupings."""
-        if len(digits) <= 2:
-            return self.generate_all_expressions(digits)
+        if len(numbers) <= 2:
+            return self.generate_all_expressions(numbers)
 
         expressions = set()
-        n = len(digits)
+        n = len(numbers)
 
-        # Token options to allow factorial
-        token_options = [[str(d), f"fact({d})"] for d in digits]
+        # Token options to allow factorial (only for single digits)
+        token_options = []
+        for num in numbers:
+            if 0 <= num <= 9:
+                token_options.append([str(num), f"fact({num})"])
+            else:
+                token_options.append([str(num)])
 
         # Try different token and operator combinations with a few grouping heuristics
         for token_choice in itertools.product(*token_options):
@@ -205,48 +294,51 @@ class AdvancedBirthdayEquationGenerator:
         return expressions
     
     def find_matching_equations(self, tolerance: float = 1e-10) -> List[Tuple[str, str, float]]:
-        """Find equations where left side equals right side."""
+        """Find equations where left side equals right side using advanced partitioning."""
         equations = []
-        n = len(self.digits)
         
-        # Try different split points
-        for split in range(1, n):
-            left_digits = self.digits[:split]
-            right_digits = self.digits[split:]
-            
-            # Generate all possible expressions for both sides
-            left_expressions = self.generate_all_expressions(left_digits)
-            right_expressions = self.generate_all_expressions(right_digits)
-            
-            # Find matching values
-            for left_expr, left_val in left_expressions:
-                for right_expr, right_val in right_expressions:
-                    if abs(left_val - right_val) <= tolerance:
-                        equations.append((left_expr, right_expr, left_val))
+        # Generate different digit partitions (including advanced splitting)
+        partitions = self.generate_digit_partitions()
+        
+        for partition in partitions:
+            # Try different split points within this partition
+            for split in range(1, len(partition)):
+                left_numbers = partition[:split]
+                right_numbers = partition[split:]
+                
+                # Generate all possible expressions for both sides
+                left_expressions = self.generate_all_expressions(left_numbers)
+                right_expressions = self.generate_all_expressions(right_numbers)
+                
+                # Find matching values
+                for left_expr, left_val in left_expressions:
+                    for right_expr, right_val in right_expressions:
+                        if abs(left_val - right_val) <= tolerance:
+                            equations.append((left_expr, right_expr, left_val))
         
         return equations
     
     def find_creative_equations(self, tolerance: float = 1e-10) -> List[Tuple[str, str, float]]:
-        """Find more creative equations with different digit arrangements."""
+        """Find more creative equations with different digit arrangements and partitions."""
         equations = []
-        n = len(self.digits)
         
-        # Try different permutations of digits (but keep original order as priority)
-        # For now, let's stick with original order but try more groupings
+        # Generate different digit partitions for creative equations
+        partitions = self.generate_digit_partitions(max_groups=6)  # Allow more groups for creativity
         
-        # Multiple split attempts
-        for split in range(1, n):
-            left_digits = self.digits[:split]
-            right_digits = self.digits[split:]
-            
-            # Use custom grouping
-            left_expressions = self.generate_with_custom_grouping(left_digits)
-            right_expressions = self.generate_with_custom_grouping(right_digits)
-            
-            for left_expr, left_val in left_expressions:
-                for right_expr, right_val in right_expressions:
-                    if abs(left_val - right_val) <= tolerance:
-                        equations.append((left_expr, right_expr, left_val))
+        for partition in partitions:
+            # Multiple split attempts within each partition
+            for split in range(1, len(partition)):
+                left_numbers = partition[:split]
+                right_numbers = partition[split:]
+                
+                # Use custom grouping
+                left_expressions = self.generate_with_custom_grouping(left_numbers)
+                right_expressions = self.generate_with_custom_grouping(right_numbers)
+                
+                for left_expr, left_val in left_expressions:
+                    for right_expr, right_val in right_expressions:
+                        if abs(left_val - right_val) <= tolerance:
+                            equations.append((left_expr, right_expr, left_val))
         
         return equations
 
@@ -258,6 +350,16 @@ def demonstrate_example():
     
     try:
         generator = AdvancedBirthdayEquationGenerator("09052005")
+        
+        # Show different digit partitions
+        partitions = generator.generate_digit_partitions()
+        print(f"Generated {len(partitions)} different digit partitions:")
+        for i, partition in enumerate(partitions[:10]):  # Show first 10
+            print(f"  {i+1}. {partition}")
+        if len(partitions) > 10:
+            print(f"  ... and {len(partitions) - 10} more partitions")
+        print()
+        
         equations = generator.find_matching_equations()
         
         print(f"Found {len(equations)} equations:")
