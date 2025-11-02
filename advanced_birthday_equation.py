@@ -16,7 +16,8 @@ import math
 class AdvancedBirthdayEquationGenerator:
     """Advanced generator with better expression handling."""
     
-    OPERATORS = ['+', '-', '*', '/']
+    # Include '^' for power and 'root' for n-th root; factorial will be available via tokenization
+    OPERATORS = ['+', '-', '*', '/', '^', 'root']
     
     def __init__(self, date_string: str):
         self.digits = [int(d) for d in re.findall(r'\d', date_string)]
@@ -30,15 +31,36 @@ class AdvancedBirthdayEquationGenerator:
         """Safely evaluate mathematical expressions."""
         try:
             # Replace some operators for safety
-            safe_expr = expression.replace('^', '**')  # Handle exponentiation if added
-            
+            # We'll map '^' to '**' in the eval step but also provide fact/root functions
+            safe_expr = expression.replace('^', '**')
+
+            def fact(n):
+                try:
+                    ni = int(n)
+                except Exception:
+                    raise ValueError("factorial requires integer")
+                if ni < 0:
+                    raise ValueError("factorial requires non-negative integer")
+                if ni > 12:
+                    raise ValueError("factorial too large")
+                res = 1
+                for k in range(2, ni + 1):
+                    res *= k
+                return res
+
+            def root(a, b):
+                if b == 0:
+                    raise ZeroDivisionError("0-th root")
+                return float(a) ** (1.0 / float(b))
+
             # Use eval with restricted globals for safety
             allowed_names = {
                 "__builtins__": {},
                 "abs": abs, "min": min, "max": max,
-                "round": round, "int": int, "float": float
+                "round": round, "int": int, "float": float,
+                "fact": fact, "root": root
             }
-            
+
             result = eval(safe_expr, allowed_names)
             
             # Validate result
@@ -55,30 +77,54 @@ class AdvancedBirthdayEquationGenerator:
     def generate_all_expressions(self, digits: List[int]) -> Set[Tuple[str, float]]:
         """Generate all possible expressions from digits with different operator combinations."""
         if len(digits) == 1:
-            return {(str(digits[0]), float(digits[0]))}
+            # Allow factorial option for single digit too
+            d = digits[0]
+            results = set()
+            results.add((str(d), float(d)))
+            # try factorial if valid
+            try:
+                results.add((f"fact({d})", float(eval(str(math.factorial(d))))))
+            except Exception:
+                pass
+            return results
         
         expressions = set()
         
-        # Generate all operator combinations
-        for operators in itertools.product(self.OPERATORS, repeat=len(digits)-1):
-            # Create expression without parentheses (relies on operator precedence)
-            expr = str(digits[0])
-            for i, op in enumerate(operators):
-                expr += f" {op} {digits[i + 1]}"
-            
-            result = self.safe_eval(expr)
-            if result is not None:
-                expressions.add((expr, result))
-            
-            # Also try with full parenthesization (left to right)
-            if len(digits) > 2:
-                paren_expr = f"({digits[0]} {operators[0]} {digits[1]})"
-                for i in range(1, len(operators)):
-                    paren_expr = f"({paren_expr} {operators[i]} {digits[i + 1]})"
-                
-                result = self.safe_eval(paren_expr)
+        # Prepare token options per digit to optionally apply factorial
+        token_options = [[str(d), f"fact({d})"] for d in digits]
+
+        # Generate all combinations of tokens and operators
+        for token_choice in itertools.product(*token_options):
+            for operators in itertools.product(self.OPERATORS, repeat=len(digits)-1):
+                # Build expression respecting special operators
+                expr = str(token_choice[0])
+                for i, op in enumerate(operators):
+                    next_token = str(token_choice[i + 1])
+                    if op == '^':
+                        expr += f" ** {next_token}"
+                    elif op == 'root':
+                        expr = f"root({expr},{next_token})"
+                    else:
+                        expr += f" {op} {next_token}"
+
+                result = self.safe_eval(expr)
                 if result is not None:
-                    expressions.add((paren_expr, result))
+                    expressions.add((expr, result))
+
+                # Also try with full parenthesization (left to right)
+                if len(digits) > 2:
+                    paren_expr = f"({token_choice[0]} {operators[0]} {token_choice[1]})"
+                    for i in range(1, len(operators)):
+                        if operators[i] == 'root':
+                            paren_expr = f"root({paren_expr},{token_choice[i + 1]})"
+                        elif operators[i] == '^':
+                            paren_expr = f"({paren_expr} ** {token_choice[i + 1]})"
+                        else:
+                            paren_expr = f"({paren_expr} {operators[i]} {token_choice[i + 1]})"
+
+                    result = self.safe_eval(paren_expr)
+                    if result is not None:
+                        expressions.add((paren_expr, result))
         
         return expressions
     
@@ -86,53 +132,76 @@ class AdvancedBirthdayEquationGenerator:
         """Generate expressions with various custom groupings."""
         if len(digits) <= 2:
             return self.generate_all_expressions(digits)
-        
+
         expressions = set()
         n = len(digits)
-        
-        # Try different ways to insert parentheses
-        for operators in itertools.product(self.OPERATORS, repeat=n-1):
-            # Basic expression
-            base_expr = str(digits[0])
-            for i, op in enumerate(operators):
-                base_expr += f" {op} {digits[i + 1]}"
-            
-            result = self.safe_eval(base_expr)
-            if result is not None:
-                expressions.add((base_expr, result))
-            
-            # Try grouping first two digits
-            if n >= 3:
-                grouped_expr = f"({digits[0]} {operators[0]} {digits[1]})"
-                for i in range(1, len(operators)):
-                    grouped_expr += f" {operators[i]} {digits[i + 1]}"
-                
-                result = self.safe_eval(grouped_expr)
+
+        # Token options to allow factorial
+        token_options = [[str(d), f"fact({d})"] for d in digits]
+
+        # Try different token and operator combinations with a few grouping heuristics
+        for token_choice in itertools.product(*token_options):
+            for operators in itertools.product(self.OPERATORS, repeat=n-1):
+                # 1) Base expression (no extra parentheses)
+                expr = str(token_choice[0])
+                for i, op in enumerate(operators):
+                    next_token = str(token_choice[i + 1])
+                    if op == '^':
+                        expr += f" ** {next_token}"
+                    elif op == 'root':
+                        expr = f"root({expr},{next_token})"
+                    else:
+                        expr += f" {op} {next_token}"
+
+                result = self.safe_eval(expr)
                 if result is not None:
-                    expressions.add((grouped_expr, result))
-            
-            # Try grouping last two digits
-            if n >= 3:
-                grouped_expr = str(digits[0])
+                    expressions.add((expr, result))
+
+                # 2) Left-associative full parenthesization
+                if n > 2:
+                    paren_expr = f"({token_choice[0]} {operators[0]} {token_choice[1]})"
+                    for i in range(1, len(operators)):
+                        if operators[i] == 'root':
+                            paren_expr = f"root({paren_expr},{token_choice[i + 1]})"
+                        elif operators[i] == '^':
+                            paren_expr = f"({paren_expr} ** {token_choice[i + 1]})"
+                        else:
+                            paren_expr = f"({paren_expr} {operators[i]} {token_choice[i + 1]})"
+
+                    result = self.safe_eval(paren_expr)
+                    if result is not None:
+                        expressions.add((paren_expr, result))
+
+                # 3) Group first two only
+                grouped = f"({token_choice[0]} {operators[0]} {token_choice[1]})"
+                for i in range(1, len(operators)):
+                    next_token = str(token_choice[i + 1])
+                    op = operators[i]
+                    if op == '^':
+                        grouped = f"{grouped} ** {next_token}"
+                    elif op == 'root':
+                        grouped = f"root({grouped},{next_token})"
+                    else:
+                        grouped = f"{grouped} {op} {next_token}"
+
+                result = self.safe_eval(grouped)
+                if result is not None:
+                    expressions.add((grouped, result))
+
+                # 4) Group last two only
+                grouped = str(token_choice[0])
                 for i in range(len(operators) - 1):
-                    grouped_expr += f" {operators[i]} {digits[i + 1]}"
-                grouped_expr += f" {operators[-1]} ({digits[-2]} {operators[-1]} {digits[-1]})"
-                # This creates invalid syntax, let's fix it:
-                
-                grouped_expr = str(digits[0])
-                for i in range(len(operators) - 1):
-                    grouped_expr += f" {operators[i]} {digits[i + 1]}"
-                # Replace the last part with grouped version
-                if len(digits) >= 2:
-                    # Remove last digit and operator, add grouped version
-                    parts = grouped_expr.split()
-                    if len(parts) >= 3:
-                        grouped_expr = " ".join(parts[:-2])  # Remove last operator and digit
-                        grouped_expr += f" {operators[-1]} ({digits[-2]} {operators[-1]} {digits[-1]})"
-                        
-                        # This is getting complex, let's use a simpler approach
-                        pass
-        
+                    grouped += f" {operators[i]} {token_choice[i + 1]}"
+                last_op = operators[-1]
+                grouped = f"{grouped} {last_op} ({token_choice[-2]} {last_op} {token_choice[-1]})"
+                # Try safe eval
+                try:
+                    result = self.safe_eval(grouped)
+                    if result is not None:
+                        expressions.add((grouped, result))
+                except Exception:
+                    pass
+
         return expressions
     
     def find_matching_equations(self, tolerance: float = 1e-10) -> List[Tuple[str, str, float]]:

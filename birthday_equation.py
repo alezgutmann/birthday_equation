@@ -16,7 +16,8 @@ from typing import List, Tuple, Optional
 class BirthdayEquationGenerator:
     """Generator for arithmetic equations from date digits."""
     
-    OPERATORS = ['+', '-', '*', '/']
+    # Added '^' for exponent and 'root' for n-th root
+    OPERATORS = ['+', '-', '*', '/', '^', 'root']
     
     def __init__(self, date_string: str):
         """
@@ -48,13 +49,45 @@ class BirthdayEquationGenerator:
             return None
             
         try:
-            # Build the expression string
+            # Build the expression string. Support '^' (power) and 'root' as special ops.
+            # Also allow applying factorial to digits by passing tokens in digits list
             expr = str(digits[0])
             for i, op in enumerate(operators):
-                expr += f" {op} {digits[i + 1]}"
+                next_token = str(digits[i + 1])
+                if op == '^':
+                    expr += f" ** {next_token}"
+                elif op == 'root':
+                    # root(a,b) -> b-th root of a
+                    expr = f"root({expr},{next_token})"
+                else:
+                    expr += f" {op} {next_token}"
             
+            # Prepare safe eval environment
+            def fact(n):
+                # Factorial only for non-negative integers; cap to avoid huge values
+                try:
+                    ni = int(n)
+                except Exception:
+                    raise ValueError("factorial requires integer")
+                if ni < 0:
+                    raise ValueError("factorial requires non-negative integer")
+                if ni > 12:
+                    # Prevent explosive growth
+                    raise ValueError("factorial too large")
+                res = 1
+                for k in range(2, ni + 1):
+                    res *= k
+                return res
+
+            def root(a, b):
+                if b == 0:
+                    raise ZeroDivisionError("0-th root")
+                return float(a) ** (1.0 / float(b))
+
+            safe_globals = {"__builtins__": None}
+            safe_locals = {"fact": fact, "root": root}
             # Evaluate the expression
-            result = eval(expr)
+            result = eval(expr, safe_globals, safe_locals)
             
             # Check for valid numeric result
             if isinstance(result, (int, float)) and not (isinstance(result, float) and 
@@ -63,17 +96,24 @@ class BirthdayEquationGenerator:
                 return result
             return None
             
-        except (ZeroDivisionError, OverflowError, ValueError):
+        except (ZeroDivisionError, OverflowError, ValueError, TypeError, SyntaxError):
             return None
     
     def format_expression(self, digits: List[int], operators: List[str]) -> str:
         """Format digits and operators into a readable expression string."""
         if len(operators) != len(digits) - 1:
             return ""
-            
+        
+        # Build a human-readable expression mirroring evaluate_expression logic
         expr = str(digits[0])
         for i, op in enumerate(operators):
-            expr += f" {op} {digits[i + 1]}"
+            next_token = str(digits[i + 1])
+            if op == '^':
+                expr += f" ^ {next_token}"
+            elif op == 'root':
+                expr = f"root({expr},{next_token})"
+            else:
+                expr += f" {op} {next_token}"
         return expr
     
     def generate_equations(self, tolerance: float = 1e-10) -> List[Tuple[str, str, float]]:
@@ -93,33 +133,41 @@ class BirthdayEquationGenerator:
         for split_point in range(1, num_digits):
             left_digits = self.digits[:split_point]
             right_digits = self.digits[split_point:]
-            
-            # Generate all operator combinations for left side
+
+            # Prepare token variants to allow factorial usage on any digit (e.g., 'fact(5)')
+            def token_options_for(digits_list):
+                return [[str(d), f"fact({d})"] for d in digits_list]
+
+            left_token_options = token_options_for(left_digits)
+            right_token_options = token_options_for(right_digits)
+
+            # Operator combinations
             if len(left_digits) > 1:
                 left_operator_combinations = itertools.product(self.OPERATORS, repeat=len(left_digits)-1)
             else:
-                left_operator_combinations = [[]]  # No operators needed for single digit
-            
-            # Generate all operator combinations for right side
+                left_operator_combinations = [()]
+
             if len(right_digits) > 1:
                 right_operator_combinations = itertools.product(self.OPERATORS, repeat=len(right_digits)-1)
             else:
-                right_operator_combinations = [[]]  # No operators needed for single digit
-            
-            # Try all combinations
-            for left_ops in left_operator_combinations:
-                for right_ops in right_operator_combinations:
-                    left_result = self.evaluate_expression(left_digits, list(left_ops))
-                    right_result = self.evaluate_expression(right_digits, list(right_ops))
-                    
-                    # Check if both sides are valid and equal (within tolerance)
-                    if (left_result is not None and right_result is not None and 
-                        abs(left_result - right_result) <= tolerance):
-                        
-                        left_expr = self.format_expression(left_digits, list(left_ops))
-                        right_expr = self.format_expression(right_digits, list(right_ops))
-                        
-                        equations.append((left_expr, right_expr, left_result))
+                right_operator_combinations = [()]
+
+            # Iterate token (factorial) choices and operator combinations
+            for left_tokens in itertools.product(*left_token_options):
+                for right_tokens in itertools.product(*right_token_options):
+                    for left_ops in left_operator_combinations:
+                        for right_ops in right_operator_combinations:
+                            left_result = self.evaluate_expression(list(left_tokens), list(left_ops))
+                            right_result = self.evaluate_expression(list(right_tokens), list(right_ops))
+
+                            # Check if both sides are valid and equal (within tolerance)
+                            if (left_result is not None and right_result is not None and 
+                                abs(left_result - right_result) <= tolerance):
+
+                                left_expr = self.format_expression(list(left_tokens), list(left_ops))
+                                right_expr = self.format_expression(list(right_tokens), list(right_ops))
+
+                                equations.append((left_expr, right_expr, left_result))
         
         return equations
     
