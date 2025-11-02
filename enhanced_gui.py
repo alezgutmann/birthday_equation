@@ -36,6 +36,7 @@ class EnhancedBirthdayEquationGUI:
         self.status_var = tk.StringVar(value="Ready")
         self.progress_var = tk.DoubleVar()
         self.max_display_var = tk.IntVar(value=50)
+        self.sort_by_var = tk.StringVar(value="value_asc")
         
         # Current data
         self.current_equations = []
@@ -173,13 +174,24 @@ class EnhancedBirthdayEquationGUI:
                                         command=lambda: self.export_results("json"), state=tk.DISABLED)
         self.export_json_btn.grid(row=0, column=2, padx=(0, 15))
         
+        # Sorting controls
+        ttk.Label(export_frame, text="Sort by:").grid(row=0, column=3, padx=(15, 5))
+        sort_combo = ttk.Combobox(export_frame, textvariable=self.sort_by_var, width=12, state="readonly")
+        sort_combo['values'] = (
+            "value_asc", "value_desc", 
+            "length_asc", "length_desc",
+            "alphabetic", "original"
+        )
+        sort_combo.grid(row=0, column=4, padx=(0, 10))
+        sort_combo.bind('<<ComboboxSelected>>', lambda e: self.refresh_results_display())
+        
         # Display limit
-        ttk.Label(export_frame, text="Display limit:").grid(row=0, column=3, padx=(15, 5))
+        ttk.Label(export_frame, text="Display limit:").grid(row=0, column=5, padx=(10, 5))
         limit_spinbox = ttk.Spinbox(export_frame, from_=10, to=1000, width=8, 
                                   textvariable=self.max_display_var)
-        limit_spinbox.grid(row=0, column=4, padx=(0, 5))
+        limit_spinbox.grid(row=0, column=6, padx=(0, 5))
         ttk.Button(export_frame, text="Refresh", 
-                  command=self.refresh_results_display).grid(row=0, column=5)
+                  command=self.refresh_results_display).grid(row=0, column=7)
         
         # Results display
         self.results_text = scrolledtext.ScrolledText(self.results_frame, font=("Consolas", 10), 
@@ -198,8 +210,14 @@ class EnhancedBirthdayEquationGUI:
         about_text = """Birthday Equation Generator v2.0
         
 This application generates arithmetic equations using digits from dates.
-It tries all possible combinations of operators (+, -, *, /) to find valid equations
-where the left side equals the right side.
+It tries all possible combinations of operators (+, -, *, /, ^, root) and factorial 
+to find valid equations where the left side equals the right side.
+
+Supported operations:
+• Basic arithmetic: +, -, *, /
+• Exponentiation: ^ (power)
+• Root functions: root(a,b) for b-th root of a
+• Factorial: fact(n) for n! (up to 12!)
 
 Two generation modes are available:
 • Basic: Standard equation generation with sequential digit splitting
@@ -331,19 +349,24 @@ Two generation modes are available:
             self.results_info_label.config(text="No results")
     
     def refresh_results_display(self):
-        """Refresh the results display with current limit."""
+        """Refresh the results display with current limit and sorting."""
         if not self.current_equations:
             self.results_text.delete(1.0, tk.END)
             self.results_text.insert(1.0, "No equations generated yet.")
             return
         
+        # Apply sorting based on selected option
+        sorted_equations = self._sort_equations(self.current_equations)
+        
         limit = self.max_display_var.get()
-        display_equations = self.current_equations[:limit]
+        display_equations = sorted_equations[:limit]
         
         self.results_text.delete(1.0, tk.END)
         
+        sort_desc = self._get_sort_description()
         content = f"Showing {len(display_equations)} of {len(self.current_equations)} equations for '{self.current_date}'\n"
         content += f"Digits: {self.current_digits}\n"
+        content += f"Sorted by: {sort_desc}\n"
         content += "=" * 80 + "\n\n"
         
         for i, (left, right, value) in enumerate(display_equations, 1):
@@ -354,6 +377,38 @@ Two generation modes are available:
             content += "Increase display limit to see more results."
         
         self.results_text.insert(1.0, content)
+    
+    def _sort_equations(self, equations):
+        """Sort equations based on the selected sorting method."""
+        sort_method = self.sort_by_var.get()
+        
+        if sort_method == "value_asc":
+            return sorted(equations, key=lambda x: x[2])
+        elif sort_method == "value_desc":
+            return sorted(equations, key=lambda x: x[2], reverse=True)
+        elif sort_method == "length_asc":
+            return sorted(equations, key=lambda x: (len(x[0]) + len(x[1]), x[2]))
+        elif sort_method == "length_desc":
+            return sorted(equations, key=lambda x: (len(x[0]) + len(x[1]), x[2]), reverse=True)
+        elif sort_method == "alphabetic":
+            return sorted(equations, key=lambda x: (x[0], x[1]))
+        else:  # original
+            return equations
+    
+    def _get_sort_description(self):
+        """Get human-readable description of current sorting method."""
+        sort_method = self.sort_by_var.get()
+        
+        descriptions = {
+            "value_asc": "Value (ascending)",
+            "value_desc": "Value (descending)", 
+            "length_asc": "Expression length (shortest first)",
+            "length_desc": "Expression length (longest first)",
+            "alphabetic": "Alphabetical order",
+            "original": "Original order"
+        }
+        
+        return descriptions.get(sort_method, "Unknown")
     
     def export_results(self, format_type):
         """Export results in specified format."""
@@ -401,39 +456,48 @@ Two generation modes are available:
     
     def _export_txt(self, file_path):
         """Export as text file."""
+        sorted_equations = self._sort_equations(self.current_equations)
+        
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write("Birthday Equation Generator Results\n")
             f.write("=" * 60 + "\n")
             f.write(f"Date Input: {self.current_date}\n")
             f.write(f"Extracted Digits: {self.current_digits}\n")
             f.write(f"Generator Type: {self.generator_type_var.get().title()}\n")
+            f.write(f"Sorted by: {self._get_sort_description()}\n")
             f.write(f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-            f.write(f"Total Unique Equations: {len(self.current_equations)}\n\n")
+            f.write(f"Total Unique Equations: {len(sorted_equations)}\n\n")
             
             f.write("Valid Equations:\n")
             f.write("-" * 40 + "\n")
             
-            for i, (left, right, value) in enumerate(self.current_equations, 1):
+            for i, (left, right, value) in enumerate(sorted_equations, 1):
                 f.write(f"{i:4d}. {left} = {right}  (= {value})\n")
     
     def _export_csv(self, file_path):
         """Export as CSV file."""
+        sorted_equations = self._sort_equations(self.current_equations)
+        
         with open(file_path, 'w', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
-            writer.writerow(['Number', 'Left Side', 'Right Side', 'Value', 'Date', 'Digits'])
+            writer.writerow(['Number', 'Left Side', 'Right Side', 'Value', 'Date', 'Digits', 'Sort_Method'])
             
-            for i, (left, right, value) in enumerate(self.current_equations, 1):
-                writer.writerow([i, left, right, value, self.current_date, str(self.current_digits)])
+            for i, (left, right, value) in enumerate(sorted_equations, 1):
+                writer.writerow([i, left, right, value, self.current_date, str(self.current_digits), self._get_sort_description()])
     
     def _export_json(self, file_path):
         """Export as JSON file."""
+        sorted_equations = self._sort_equations(self.current_equations)
+        
         data = {
             'metadata': {
                 'date_input': self.current_date,
                 'extracted_digits': self.current_digits,
                 'generator_type': self.generator_type_var.get(),
+                'sort_method': self.sort_by_var.get(),
+                'sort_description': self._get_sort_description(),
                 'generated_on': datetime.now().isoformat(),
-                'total_equations': len(self.current_equations)
+                'total_equations': len(sorted_equations)
             },
             'equations': [
                 {
@@ -442,7 +506,7 @@ Two generation modes are available:
                     'right_side': right,
                     'value': value
                 }
-                for i, (left, right, value) in enumerate(self.current_equations, 1)
+                for i, (left, right, value) in enumerate(sorted_equations, 1)
             ]
         }
         
